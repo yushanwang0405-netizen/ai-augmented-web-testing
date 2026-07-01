@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from openai import OpenAI
 from ai_agent.config import AgentConfig
 
+
 @dataclass
 class EvalResult:
     name: str
@@ -12,74 +13,72 @@ class EvalResult:
     reason: str
     issues: list = field(default_factory=list)
 
-KNOWLEDGE_DIR = Path(__file__).parent.parent.parent / "ai_agent" / "knowledge"
 
-SYSTEM_PROMPT = """
-You are a senior QA engineer reviewing AI-generated pytest test code.
-You have deep knowledge of the application's navigation flows, provided in CONTEXT.
+SYSTEM_PROMPT = """You are a senior QA automation engineer reviewing pytest + Playwright test code.
+You will be given:
+1. navigation_flows.yaml — the known navigation structure of the app
+2. Generated test code to review
 
-CHECK THESE 5 THINGS FOR EACH TEST FUNCTION:
+Check each test function for these 5 things:
+1. CORRECT_PAGE: Does the test enter the right page first?
+2. CORRECT_ORDER: Is the order navigate → interact → assert respected?
+3. PAGE_RULES: Are page-specific rules followed (e.g. dismiss overlay before clicking on home page)?
+4. CORRECT_FIXTURE: Does the function use the right fixture for the page it tests?
+5. UNKNOWN_FLOW: Does the test exercise a flow not described in navigation_flows.yaml?
 
-1. CORRECT PAGE ENTERED FIRST — right fixture or URL used before anything else
-2. CORRECT ORDER — navigate → interact → assert. Never assert before navigating.
-3. PAGE-SPECIFIC RULES (check CONTEXT carefully):
-   - Home page: overlay must be dismissed before any interaction
-   - Salary page: salary figures require login — must handle login wall
-   - Companies page: search/open must happen before applying filters
-   - Reviews page: extra 2s wait needed after page load
-4. RIGHT FIXTURE FOR THE PAGE — each page has a designated fixture in CONTEXT
-5. UNKNOWN FLOW DETECTION — if test navigates to page/section not in CONTEXT yaml,
-   flag as UNVERIFIABLE (score 0.5, needs_human_review: true)
+For UNKNOWN_FLOW: do NOT hard-fail. Score it 0.5 and set needs_human_review: true.
+For all other violations: deduct from score.
 
-SCORING:
-  1.0  = all checks pass
-  0.75 = 1 minor violation
-  0.5  = 1 major violation OR unverifiable flow found
-  0.25 = multiple major violations
-  0.0  = completely wrong flow
+Score = (functions with no violations) / (total functions). Round to 2 decimal places.
 
-Respond ONLY in this JSON format:
+Return ONLY valid JSON:
 {
-  "score": <float 0.0 to 1.0>,
+  "score": 0.0 to 1.0,
   "flow_issues": [
-    {"function": "<name>", "violation": "<ORDER/PAGE/RULES/FIXTURE/UNKNOWN_FLOW>",
-     "detail": "<what is wrong>", "needs_human_review": <true/false>}
+    {
+      "function": "<function name>",
+      "violation": "CORRECT_PAGE | CORRECT_ORDER | PAGE_RULES | CORRECT_FIXTURE | UNKNOWN_FLOW",
+      "detail": "<what is wrong>",
+      "needs_human_review": true | false
+    }
   ],
   "summary": "<one sentence>"
-}
-"""
+}"""
 
-def run(generated_file_path: str) -> EvalResult:
-    path = Path(generated_file_path)
-    if not path.exists():
-        return EvalResult(name="Flow Check", score=0.0, passed=False,
-                         reason="File does not exist.", issues=[f"File not found: {generated_file_path}"])
-    generated_code = path.read_text(encoding="utf-8")
-    nav_flows_path = KNOWLEDGE_DIR / "navigation_flows.yaml"
-    if not nav_flows_path.exists():
-        return EvalResult(name="Flow Check", score=0.0, passed=False,
-                         reason="navigation_flows.yaml not found.",
-                         issues=["Cannot evaluate flow without navigation knowledge."])
-    navigation_context = nav_flows_path.read_text(encoding="utf-8")
+
+def run(generated_file_path: str, navigation_flows_path: str) -> EvalResult:
     AgentConfig.validate()
     client = OpenAI(api_key=AgentConfig.OPENAI_API_KEY)
+
+    code = Path(generated_file_path).read_text(encoding="utf-8")
+    flows = Path(navigation_flows_path).read_text(encoding="utf-8")
+
     response = client.chat.completions.create(
-        model=AgentConfig.OPENAI_MODEL, temperature=0,
+        model=AgentConfig.OPENAI_MODEL,
+        temperature=0,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": (
-                f"CONTEXT — Application Navigation Flows:\n```yaml\n{navigation_context}\n```\n\n"
-                f"TEST CODE TO EVALUATE:\n```python\n{generated_code}\n```\n\n"
-                f"Evaluate the navigation flow of each test function."
-            )}
-        ]
+                f"=== navigation_flows.yaml ===\n{flows}\n\n"
+                f"=== Generated test code ===\n```python\n{code}\n```"
+            )},
+        ],
     )
+
     data = json.loads(response.choices[0].message.content)
     score = float(data.get("score", 0.0))
+    passed = score >= 0.75
+
     issues = []
-    for item in data.get("flow_issues", []):
-        prefix = "⚠ HUMAN REVIEW" if item.get("needs_human_review") else "✗"
-        issues.append(f"{prefix} [{item['function']}] {item['violation']} — {item['detail']}")
-    return EvalResult(name="Flow Check", score=round(score, 3),
-                     passed=score >= 0.75, reason=data.get("summary", ""), issues=issues)
+    for fi in data.get("flow_issues", []):
+        prefix = "HUMAN REVIEW" if fi.get("needs_human_review") else fi["violation"]
+        issues.append(f"[{fi['function']}] {prefix} — {fi['detail']}")
+
+    return EvalResult(
+        name="Flow Check",
+        score=round(score, 2),
+        passed=passed,
+        reason=data.get("summary", ""),
+        issues=issues,
+    )

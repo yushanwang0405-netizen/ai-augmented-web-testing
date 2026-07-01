@@ -4,6 +4,7 @@ from dataclasses import dataclass, field
 from openai import OpenAI
 from ai_agent.config import AgentConfig
 
+
 @dataclass
 class EvalResult:
     name: str
@@ -12,77 +13,73 @@ class EvalResult:
     reason: str
     issues: list = field(default_factory=list)
 
-SYSTEM_PROMPT = """
-You are a senior QA engineer reviewing AI-generated pytest tests against a user story.
 
-CHECK THESE 4 THINGS:
+SYSTEM_PROMPT = """You are a senior QA engineer checking whether a generated test file adequately covers a user story.
 
-1. ACCEPTANCE CRITERIA COVERAGE
-   - Identify every AC in the user story
-   - Check if each AC has at least one test that covers it with correct assertions
-   - Flag any AC with no corresponding test as a COVERAGE GAP
+You will be given:
+1. A user story with acceptance criteria (ACs)
+2. Generated test code
 
-2. CORRECT EXPECTED OUTCOMES
-   - Story says what should happen — do assertions verify exactly that?
-   - Flag any test where assertion doesn't match story's expected outcome
+Check for:
+1. AC_COVERAGE: Is every AC covered by at least one test?
+2. CORRECT_OUTCOMES: Do assertions verify what the AC says should happen?
+3. NEGATIVE_CASES: Are error states / edge cases tested if the story mentions them?
+4. SCOPE_CREEP: Does the test cover things the story never asked for?
 
-3. NEGATIVE AND EDGE CASES
-   - Does story mention errors, empty states, invalid inputs, boundary conditions?
-   - If yes — are those tested? Flag missing negative/edge case tests.
+Severity for gaps: MAJOR (AC completely untested) or MINOR (partially tested or weak).
 
-4. SCOPE CREEP
-   - Did agent write tests for things the story never mentioned?
-   - Flag out-of-scope tests for review.
+score = acs_covered / total_acs_found. Round to 2 decimal places.
 
-SCORING:
-  1.0  = all ACs covered, correct outcomes, edge cases covered
-  0.75 = 1 minor gap (missing edge case, slightly wrong assertion)
-  0.5  = 1 major gap (missing AC entirely) or multiple minor gaps
-  0.25 = multiple ACs missing
-  0.0  = tests don't match story at all
-
-Respond ONLY in this JSON format:
+Return ONLY valid JSON:
 {
-  "score": <float 0.0 to 1.0>,
-  "total_acs_found": <integer>,
-  "acs_covered": <integer>,
-  "coverage_gaps": [{"missing": "<what is not tested>", "severity": "<MAJOR or MINOR>"}],
-  "out_of_scope": ["<function name>"],
+  "score": 0.0 to 1.0,
+  "total_acs_found": <int>,
+  "acs_covered": <int>,
+  "coverage_gaps": [
+    {"ac": "<AC text>", "severity": "MAJOR | MINOR", "detail": "<what is missing>"}
+  ],
+  "out_of_scope": ["<description of extra thing tested>"],
   "summary": "<one sentence>"
-}
-"""
+}"""
+
 
 def run(generated_file_path: str, user_story: str) -> EvalResult:
-    path = Path(generated_file_path)
-    if not path.exists():
-        return EvalResult(name="Story Coverage", score=0.0, passed=False,
-                         reason="File does not exist.", issues=[f"File not found: {generated_file_path}"])
-    if not user_story or not user_story.strip():
-        return EvalResult(name="Story Coverage", score=0.0, passed=False,
-                         reason="No user story provided.",
-                         issues=["User story is empty — provide the original story text."])
-    generated_code = path.read_text(encoding="utf-8")
     AgentConfig.validate()
     client = OpenAI(api_key=AgentConfig.OPENAI_API_KEY)
+
+    code = Path(generated_file_path).read_text(encoding="utf-8")
+
     response = client.chat.completions.create(
-        model=AgentConfig.OPENAI_MODEL, temperature=0,
+        model=AgentConfig.OPENAI_MODEL,
+        temperature=0,
         response_format={"type": "json_object"},
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
             {"role": "user", "content": (
-                f"USER STORY:\n```\n{user_story}\n```\n\n"
-                f"GENERATED TESTS:\n```python\n{generated_code}\n```\n\n"
-                f"Evaluate whether the generated tests fully cover the user story."
-            )}
-        ]
+                f"=== User Story ===\n{user_story}\n\n"
+                f"=== Generated Test Code ===\n```python\n{code}\n```"
+            )},
+        ],
     )
+
     data = json.loads(response.choices[0].message.content)
     score = float(data.get("score", 0.0))
-    issues = [f"ACs covered: {data.get('acs_covered', 0)}/{data.get('total_acs_found', 0)}"]
+    passed = score >= 0.75
+
+    issues = []
     for gap in data.get("coverage_gaps", []):
-        prefix = "✗ MAJOR" if gap.get("severity") == "MAJOR" else "! MINOR"
-        issues.append(f"{prefix} GAP — {gap['missing']}")
-    for fn in data.get("out_of_scope", []):
-        issues.append(f"? OUT OF SCOPE — {fn}")
-    return EvalResult(name="Story Coverage", score=round(score, 3),
-                     passed=score >= 0.75, reason=data.get("summary", ""), issues=issues)
+        issues.append(f"{gap['severity']} GAP — {gap['ac']}: {gap['detail']}")
+    for oos in data.get("out_of_scope", []):
+        issues.append(f"OUT OF SCOPE — {oos}")
+
+    total = data.get("total_acs_found", 0)
+    covered = data.get("acs_covered", 0)
+    reason = f"ACs covered: {covered}/{total}. {data.get('summary', '')}"
+
+    return EvalResult(
+        name="Story Coverage",
+        score=round(score, 2),
+        passed=passed,
+        reason=reason,
+        issues=issues,
+    )

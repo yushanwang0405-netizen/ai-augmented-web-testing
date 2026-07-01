@@ -1,6 +1,7 @@
-import re
+import ast
 from pathlib import Path
 from dataclasses import dataclass, field
+
 
 @dataclass
 class EvalResult:
@@ -10,40 +11,70 @@ class EvalResult:
     reason: str
     issues: list = field(default_factory=list)
 
+
 def _extract_defined_fixtures(source_code: str) -> set:
-    matches = re.findall(r"@pytest\.fixture[^\n]*\ndef (\w+)", source_code)
-    return set(matches)
+    """Return names of all @pytest.fixture-decorated functions in source."""
+    try:
+        tree = ast.parse(source_code)
+    except SyntaxError:
+        return set()
+
+    fixtures = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            for dec in node.decorator_list:
+                target = dec.func if isinstance(dec, ast.Call) else dec
+                is_fixture = (
+                    (isinstance(target, ast.Name) and target.id == "fixture")
+                    or (isinstance(target, ast.Attribute) and target.attr == "fixture")
+                )
+                if is_fixture:
+                    fixtures.add(node.name)
+    return fixtures
+
 
 def _extract_used_fixtures(source_code: str) -> set:
+    """Return all parameter names used in test functions (excluding self)."""
+    try:
+        tree = ast.parse(source_code)
+    except SyntaxError:
+        return set()
+
     used = set()
-    param_strings = re.findall(r"def test_\w+\(self,([^)]+)\)", source_code)
-    for param_string in param_strings:
-        for param in param_string.split(","):
-            name = param.strip().split(":")[0].strip()
-            if name:
-                used.add(name)
+    for node in ast.walk(tree):
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            if node.name.startswith("test_"):
+                for arg in node.args.args:
+                    if arg.arg != "self":
+                        used.add(arg.arg)
     return used
 
+
 def run(generated_file_path: str, conftest_path: str) -> EvalResult:
-    gen_path = Path(generated_file_path)
-    conftest = Path(conftest_path)
-    if not gen_path.exists():
-        return EvalResult(name="Fixture Check", score=0.0, passed=False,
-                         reason="Generated file does not exist.", issues=[f"File not found: {generated_file_path}"])
-    if not conftest.exists():
-        return EvalResult(name="Fixture Check", score=0.0, passed=False,
-                         reason="conftest.py not found.", issues=[f"conftest not found: {conftest_path}"])
-    conftest_code = conftest.read_text(encoding="utf-8")
-    known_fixtures = _extract_defined_fixtures(conftest_code)
-    generated_code = gen_path.read_text(encoding="utf-8")
-    inline_fixtures = _extract_defined_fixtures(generated_code)
-    known_fixtures = known_fixtures | inline_fixtures | {"self", "request", "pytestconfig"}
+    generated_code = Path(generated_file_path).read_text(encoding="utf-8")
+    conftest_code = Path(conftest_path).read_text(encoding="utf-8")
+
+    known_fixtures = (
+        _extract_defined_fixtures(conftest_code)
+        | _extract_defined_fixtures(generated_code)
+        | {"self", "request", "pytestconfig"}
+    )
     used_fixtures = _extract_used_fixtures(generated_code)
     invented = used_fixtures - known_fixtures
-    if not invented:
-        return EvalResult(name="Fixture Check", score=1.0, passed=True,
-                         reason=f"All {len(used_fixtures)} fixtures are valid.")
+
     score = max(0.0, 1.0 - (len(invented) * 0.3))
-    issues = [f"Invented fixture (does not exist anywhere): '{f}'" for f in sorted(invented)]
-    return EvalResult(name="Fixture Check", score=round(score, 3), passed=False,
-                     reason=f"{len(invented)} invented fixture(s) found.", issues=issues)
+    passed = len(invented) == 0
+
+    issues = [f"Invented fixture: '{f}'" for f in sorted(invented)]
+    reason = (
+        "All fixtures are valid." if passed
+        else f"{len(invented)} invented fixture(s) that don't exist in conftest.py."
+    )
+
+    return EvalResult(
+        name="Fixture Check",
+        score=round(score, 2),
+        passed=passed,
+        reason=reason,
+        issues=issues,
+    )
