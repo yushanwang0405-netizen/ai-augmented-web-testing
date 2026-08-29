@@ -161,10 +161,15 @@ class GeneratorAgent:
         # Validate Python syntax
         syntax_error = _check_syntax(code)
         if syntax_error:
+            preview = repr(code[:500])
+
             return GenerationResult(
                 success=False,
                 code=code,
-                error=f"Syntax error in generated code: {syntax_error}",
+                error=(
+                    f"Syntax error in generated code: {syntax_error}\n"
+                    f"Generated code preview: {preview}"
+                ),
                 tool_calls_made=tool_calls_made,
                 tokens_used=total_tokens,
             )
@@ -206,18 +211,40 @@ class GeneratorAgent:
 # ── Helpers ──────────────────────────────────────────────────────────────────
 
 def _strip_markdown(text: str) -> str:
-    """Remove markdown code fences if Claude wrapped the output."""
+    """Extract Python code from an LLM response and discard surrounding prose."""
     text = text.strip()
-    if text.startswith("```"):
-        lines = text.splitlines()
-        # Remove first line (```python or ```) and last line (```)
-        if lines[-1].strip() == "```":
-            lines = lines[1:-1]
-        else:
-            lines = lines[1:]
-        text = "\n".join(lines)
-    return text.strip()
 
+    # Case 1: Python fenced code block, possibly surrounded by prose.
+    if "```python" in text:
+        code = text.split("```python", 1)[1]
+        code = code.split("```", 1)[0]
+        return code.strip()
+
+    # Case 2: Generic fenced code block.
+    if "```" in text:
+        code = text.split("```", 1)[1]
+        code = code.split("```", 1)[0]
+        return code.strip()
+
+    # Case 3: Plain Python preceded by explanatory prose.
+    common_python_starts = [
+        "import pytest",
+        "import allure",
+        "from ",
+        "import ",
+    ]
+
+    positions = [
+        text.find(marker)
+        for marker in common_python_starts
+        if text.find(marker) != -1
+    ]
+
+    if positions:
+        return text[min(positions):].strip()
+
+    # Fall back to the original response.
+    return text
 
 def _check_syntax(code: str) -> str | None:
     """Return a syntax error message, or None if code is valid Python."""

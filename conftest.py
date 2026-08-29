@@ -42,7 +42,7 @@ def pw_page(driver):
 @pytest.fixture(autouse=True)
 def screenshot_on_failure(request, driver):
     yield
-    if request.node.rep_call and request.node.rep_call.failed:
+    if getattr(request.node, "rep_call", None) and request.node.rep_call.failed:
         try:
             import allure
             from utils.config import Config

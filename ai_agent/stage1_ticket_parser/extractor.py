@@ -46,6 +46,9 @@ Rules:
 - priority=High for important but non-blocking flows
 - Include at least one negative/error test case per feature
 - affected_pages must use snake_case matching the codebase conventions
+- Only include a page in affected_pages when it is explicitly stated or clearly implied by the requirement
+- Do not invent a new page name from a UI element or feature name (for example, a search bar does not imply a search_page)
+- If the requirement does not identify a page, use an empty affected_pages list rather than guessing
 - Never invent requirements not stated in the input
 - Generate between 3 and 15 test cases depending on feature complexity
 """.strip()
@@ -79,7 +82,14 @@ def extract_test_spec(
         response_format={"type": "json_object"},
     )
 
-    raw_json = message.choices[0].message.content.strip()
+    content = message.choices[0].message.content
+
+    if not content:
+        raise ValueError(
+            "LLM returned empty content while extracting TestSpec."
+        )
+
+    raw_json = content.strip()
 
     # Strip markdown code fences if the model wrapped the JSON
     if raw_json.startswith("```"):
