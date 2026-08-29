@@ -29,14 +29,23 @@ class SearchBar:
         self.page.locator(self.CONTAINER).click()
         self.page.locator(self.INPUT).fill(query)
         self.page.wait_for_timeout(800)
+
         # Select first dropdown suggestion if it appears
-        suggestion = self.page.locator('[class*="suggestion"], [class*="autocomplete"] li, [role="option"]').first
+        suggestion = self.page.locator(
+            '[class*="suggestion"], [class*="autocomplete"] li, [role="option"]'
+        ).first
+
         if suggestion.is_visible():
             suggestion.click()
         else:
             self.page.locator(self.INPUT).press("Enter")
+
         self.page.wait_for_load_state("domcontentloaded")
         self.page.wait_for_timeout(1500)
+
+    def fill(self, query: str):
+        self.page.locator(self.CONTAINER).click()
+        self.page.locator(self.INPUT).fill(query)
 
     def is_visible(self) -> bool:
         return self.page.locator(self.CONTAINER).is_visible()

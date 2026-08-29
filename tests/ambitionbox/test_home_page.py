@@ -92,3 +92,11 @@ class TestHomePage:
     def test_search_bar_is_visible_on_home_page(
             self, home_page, search_bar):
         assert search_bar.is_visible()
+
+    def test_search_bar_accepts_input(
+            self, home_page, search_bar):
+        search_bar.fill("Accenture")
+
+        assert search_bar.get_current_value() == "Accenture"
+
+
