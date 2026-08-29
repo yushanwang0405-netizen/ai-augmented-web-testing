@@ -99,4 +99,25 @@ class TestHomePage:
 
         assert search_bar.get_current_value() == "Accenture"
 
+    @pytest.mark.parametrize("query", [
+        "Accenture",
+        "TCS",
+        "A",
+    ])
+    def test_search_bar_accepts_different_inputs(
+            self, home_page, search_bar, query):
+
+        search_bar.fill(query)
+
+        assert search_bar.get_current_value() == query
+
+    def test_search_bar_can_be_cleared(
+            self, home_page, search_bar):
+
+        search_bar.fill("Accenture")
+        assert search_bar.get_current_value() == "Accenture"
+
+        search_bar.clear()
+
+        assert search_bar.get_current_value() == ""
 

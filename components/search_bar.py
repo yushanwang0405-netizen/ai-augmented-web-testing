@@ -47,6 +47,9 @@ class SearchBar:
         self.page.locator(self.CONTAINER).click()
         self.page.locator(self.INPUT).fill(query)
 
+    def clear(self):
+        self.page.locator(self.INPUT).fill("")
+
     def is_visible(self) -> bool:
         return self.page.locator(self.CONTAINER).is_visible()
 
