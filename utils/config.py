@@ -27,6 +27,7 @@ class Config:
     # Browser / Platform
     BASE_URL: str = os.getenv("BASE_URL", "https://www.ambitionbox.com")
     BROWSER: str = os.getenv("BROWSER", "chromium")
+    BROWSER_CHANNEL: str = os.getenv("BROWSER_CHANNEL", "")
     HEADLESS: bool = os.getenv("HEADLESS", "false").lower() == "true"
     PLATFORM: str = os.getenv("PLATFORM", "web")
     SLOW_MO: int = int(os.getenv("SLOW_MO", "0"))

@@ -88,3 +88,7 @@ class TestHomePage:
 
         assert popular_content != my_company_content, \
             "Expected content to change when switching from Popular to My Company tab"
+
+    def test_search_bar_is_visible_on_home_page(
+            self, home_page, search_bar):
+        assert search_bar.is_visible()

@@ -22,10 +22,15 @@ class WebDriver:
         self._playwright = sync_playwright().start()
 
         browser_launcher = getattr(self._playwright, Config.BROWSER)
-        self._browser = browser_launcher.launch(
-            headless=Config.HEADLESS,
-            slow_mo=Config.SLOW_MO,
-        )
+        launch_options = {
+            "headless": Config.HEADLESS,
+            "slow_mo": Config.SLOW_MO,
+        }
+
+        if Config.BROWSER_CHANNEL:
+            launch_options["channel"] = Config.BROWSER_CHANNEL
+
+        self._browser = browser_launcher.launch(**launch_options)
         self._context = self._browser.new_context(
             base_url=Config.BASE_URL,
             viewport={"width": 1440, "height": 900},
