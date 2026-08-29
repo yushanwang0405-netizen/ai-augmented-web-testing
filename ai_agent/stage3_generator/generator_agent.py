@@ -51,7 +51,10 @@ class GeneratorAgent:
 
     def __init__(self):
         AgentConfig.validate()
-        self.client = OpenAI(api_key=AgentConfig.OPENAI_API_KEY)
+        self.client = OpenAI(
+            api_key=AgentConfig.OPENAI_API_KEY,
+            base_url=AgentConfig.OPENAI_BASE_URL,
+        )
 
     # ── Public API ─────────────────────────────────────────────────────────
 
@@ -166,6 +169,17 @@ class GeneratorAgent:
                 tokens_used=total_tokens,
             )
 
+        # Validate generated test completeness
+        completeness_error = _check_test_completeness(code)
+        if completeness_error:
+            return GenerationResult(
+                success=False,
+                code=code,
+                error=completeness_error,
+                tool_calls_made=tool_calls_made,
+                tokens_used=total_tokens,
+            )
+
         # Determine output file path
         filepath = _determine_filepath(spec)
 
@@ -212,6 +226,30 @@ def _check_syntax(code: str) -> str | None:
         return None
     except SyntaxError as e:
         return f"Line {e.lineno}: {e.msg}"
+
+def _check_test_completeness(code: str) -> str | None:
+    """Validate that generated code contains a pytest test and assertion."""
+    tree = ast.parse(code)
+
+    test_functions = [
+        node for node in ast.walk(tree)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef))
+        and node.name.startswith("test_")
+    ]
+
+    if not test_functions:
+        return "Generated code contains no pytest test function."
+
+    has_assert = any(
+        isinstance(node, ast.Assert)
+        for func in test_functions
+        for node in ast.walk(func)
+    )
+
+    if not has_assert:
+        return "Generated test contains no assertion."
+
+    return None
 
 
 def _determine_filepath(spec: TestSpec) -> str:

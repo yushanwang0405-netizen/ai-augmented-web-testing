@@ -12,6 +12,10 @@ class AgentConfig:
     # OpenAI
     OPENAI_API_KEY: str = os.getenv("OPENAI_API_KEY", "")
     OPENAI_MODEL: str = os.getenv("OPENAI_MODEL", "gpt-4o")
+    OPENAI_BASE_URL: str = os.getenv(
+        "OPENAI_BASE_URL",
+        "https://api.openai.com/v1"
+    )
 
     # Jira
     JIRA_SERVER: str = os.getenv("JIRA_SERVER", "")

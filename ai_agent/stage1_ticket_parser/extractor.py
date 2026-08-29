@@ -62,8 +62,10 @@ def extract_test_spec(
     """
     AgentConfig.validate()
 
-    client = OpenAI(api_key=AgentConfig.OPENAI_API_KEY)
-
+    client = OpenAI(
+        api_key=AgentConfig.OPENAI_API_KEY,
+        base_url=AgentConfig.OPENAI_BASE_URL,
+    )
     message = client.chat.completions.create(
         model=AgentConfig.OPENAI_MODEL,
         max_tokens=4096,
